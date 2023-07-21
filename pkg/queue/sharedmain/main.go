@@ -17,7 +17,10 @@ limitations under the License.
 package sharedmain
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net/http"
@@ -227,7 +230,8 @@ func Main(opts ...Option) error {
 	}
 
 	// Enable TLS when certificate is mounted.
-	tlsEnabled := exists(logger, certPath) && exists(logger, keyPath)
+	//
+	tlsEnabled := false
 
 	mainHandler, drainer := mainHandler(d.Ctx, env, d.Transport, probe, stats, logger)
 	adminHandler := adminHandler(d.Ctx, logger, drainer)
@@ -236,9 +240,8 @@ func Main(opts ...Option) error {
 	// At this moment activator with TLS does not disable HTTP.
 	// See also https://github.com/knative/serving/issues/12808.
 	httpServers := map[string]*http.Server{
-		"main":    mainServer(":"+env.QueueServingPort, mainHandler),
-		"admin":   adminServer(":"+strconv.Itoa(networking.QueueAdminPort), adminHandler),
-		"metrics": metricsServer(protoStatReporter),
+		"main":  mainServer(":"+env.QueueServingPort, mainHandler),
+		"admin": adminServer(":"+strconv.Itoa(networking.QueueAdminPort), adminHandler),
 	}
 
 	if env.EnableProfiling {
@@ -257,7 +260,7 @@ func Main(opts ...Option) error {
 		tlsServers = map[string]*http.Server{}
 	}
 
-	logger.Info("Starting queue-proxy")
+	logger.Info("Starting TLS queue-proxy")
 
 	errCh := make(chan error)
 	for name, server := range httpServers {
@@ -273,7 +276,7 @@ func Main(opts ...Option) error {
 		go func(name string, s *http.Server) {
 			// Don't forward ErrServerClosed as that indicates we're already shutting down.
 			logger.Info("Starting tls server ", name, s.Addr)
-			if err := s.ListenAndServeTLS(certPath, keyPath); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if err := s.ListenAndServeTLS("/secrets/tmp/cert.pem", "/secrets/tmp/key.pem"); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errCh <- fmt.Errorf("%s server failed to serve: %w", name, err)
 			}
 		}(name, server)
@@ -333,7 +336,23 @@ func buildTransport(env config) http.RoundTripper {
 		maxIdleConns = env.ContainerConcurrency
 	}
 	// set max-idle and max-idle-per-host to same value since we're always proxying to the same host.
-	transport := pkgnet.NewProxyAutoTransport(maxIdleConns /* max-idle */, maxIdleConns /* max-idle-per-host */)
+	config := tls.Config{}
+	var peerCertificates [][]byte = nil
+	config.InsecureSkipVerify = true
+	config.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		if peerCertificates == nil {
+			peerCertificates = rawCerts
+		} else {
+			for i, rawCert := range rawCerts {
+				if !bytes.Equal(peerCertificates[i], rawCert) {
+					return fmt.Errorf("peer certificate '%d' changed", i)
+				}
+			}
+		}
+
+		return nil
+	}
+	transport := pkgnet.NewProxyAutoTLSTransport(maxIdleConns, maxIdleConns, &config)
 
 	if env.TracingConfigBackend == tracingconfig.None {
 		return transport

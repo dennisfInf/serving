@@ -315,7 +315,7 @@ func defaultConfig() *Config {
 		AutocreateClusterDomainClaims: false,
 		DefaultExternalScheme:         "http",
 		MeshCompatibilityMode:         MeshCompatibilityModeAuto,
-		InternalEncryption:            false,
+		InternalEncryption:            true,
 		DataplaneTrust:                TrustDisabled,
 		ControlplaneTrust:             TrustDisabled,
 	}

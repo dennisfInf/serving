@@ -17,6 +17,7 @@ limitations under the License.
 package queue
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -32,6 +33,7 @@ func ForwardedShimHandler(h http.Handler) http.Handler {
 
 		// Forwarded: by=<identifier>;for=<identifier>;host=<host>;proto=<http|https>
 		fwd := r.Header.Get("Forwarded")
+		fmt.Println("Forwarded:" + fwd)
 
 		// Don't add a shim if the header is already present
 		if fwd != "" {
@@ -40,10 +42,13 @@ func ForwardedShimHandler(h http.Handler) http.Handler {
 
 		// X-Forwarded-For: <client>, <proxy1>, <proxy2>
 		xff := r.Header.Get("X-Forwarded-For")
+		fmt.Println("Forwarded for:" + xff)
+
 		// X-Forwarded-Proto: <protocol>
 		xfp := r.Header.Get("X-Forwarded-Proto")
 		// X-Forwarded-Host: <host>
 		xfh := r.Header.Get("X-Forwarded-Host")
+		fmt.Println("Host:" + xfh)
 
 		// Nothing to do if we don't have any X-Forwarded-* headers
 		if xff == "" && xfp == "" && xfh == "" {

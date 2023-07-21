@@ -297,16 +297,32 @@ func makeQueueContainer(rev *v1.Revision, cfg *config.Config) (*corev1.Container
 			},
 		}
 	}
-
+	privileged := true
 	useQPResourceDefaults := cfg.Features.QueueProxyResourceDefaults == apicfg.Enabled
 	c := &corev1.Container{
-		Name:            QueueContainerName,
-		Image:           cfg.Deployment.QueueSidecarImage,
-		Resources:       createQueueResources(cfg.Deployment, rev.GetAnnotations(), container, useQPResourceDefaults),
-		Ports:           ports,
-		StartupProbe:    execProbe,
-		ReadinessProbe:  httpProbe,
-		SecurityContext: queueSecurityContext,
+		Name:           QueueContainerName,
+		Image:          cfg.Deployment.QueueSidecarImage,
+		Resources:      createQueueResources(cfg.Deployment, rev.GetAnnotations(), container, useQPResourceDefaults),
+		Ports:          ports,
+		StartupProbe:   execProbe,
+		ReadinessProbe: httpProbe,
+		SecurityContext: &corev1.SecurityContext{
+			Privileged: &privileged,
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "dev-sgx-enclave",
+				MountPath: "/dev/sgx/enclave",
+			},
+			{
+				Name:      "dev-sgx-enclave",
+				MountPath: "/dev/sgx_enclave",
+			},
+			{
+				Name:      "dev-sgx-provision",
+				MountPath: "/dev/sgx_provision",
+			},
+		},
 		Env: []corev1.EnvVar{{
 			Name:  "SERVING_NAMESPACE",
 			Value: rev.Namespace,

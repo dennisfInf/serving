@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"path"
 	"strings"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -122,63 +121,7 @@ func validatePersistentVolumeClaims(volume corev1.VolumeSource, features *config
 }
 
 func validateVolume(ctx context.Context, volume corev1.Volume) *apis.FieldError {
-	features := config.FromContextOrDefaults(ctx).Features
-	errs := validatePersistentVolumeClaims(volume.VolumeSource, features)
-	if volume.EmptyDir != nil && features.PodSpecVolumesEmptyDir != config.Enabled {
-		errs = errs.Also(&apis.FieldError{Message: fmt.Sprintf("EmptyDir volume support is disabled, "+
-			"but found EmptyDir volume %s", volume.Name)})
-	}
-	errs = errs.Also(apis.CheckDisallowedFields(volume, *VolumeMask(ctx, &volume)))
-	if volume.Name == "" {
-		errs = apis.ErrMissingField("name")
-	} else if len(validation.IsDNS1123Label(volume.Name)) != 0 {
-		errs = apis.ErrInvalidValue(volume.Name, "name")
-	}
-	vs := volume.VolumeSource
-	errs = errs.Also(apis.CheckDisallowedFields(vs, *VolumeSourceMask(ctx, &vs)))
-	var specified []string
-	if vs.Secret != nil {
-		specified = append(specified, "secret")
-		for i, item := range vs.Secret.Items {
-			errs = errs.Also(validateKeyToPath(item).ViaFieldIndex("items", i))
-		}
-	}
-	if vs.ConfigMap != nil {
-		specified = append(specified, "configMap")
-		for i, item := range vs.ConfigMap.Items {
-			errs = errs.Also(validateKeyToPath(item).ViaFieldIndex("items", i))
-		}
-	}
-	if vs.Projected != nil {
-		specified = append(specified, "projected")
-		for i, proj := range vs.Projected.Sources {
-			errs = errs.Also(validateProjectedVolumeSource(proj).ViaFieldIndex("projected", i))
-		}
-	}
-	if vs.EmptyDir != nil {
-		specified = append(specified, "emptyDir")
-		errs = errs.Also(validateEmptyDirFields(vs.EmptyDir).ViaField("emptyDir"))
-	}
-
-	if vs.PersistentVolumeClaim != nil {
-		specified = append(specified, "persistentVolumeClaim")
-	}
-
-	if len(specified) == 0 {
-		fieldPaths := []string{"secret", "configMap", "projected"}
-		cfg := config.FromContextOrDefaults(ctx)
-		if cfg.Features.PodSpecVolumesEmptyDir == config.Enabled {
-			fieldPaths = append(fieldPaths, "emptyDir")
-		}
-		if cfg.Features.PodSpecPersistentVolumeClaim == config.Enabled {
-			fieldPaths = append(fieldPaths, "persistentVolumeClaim")
-		}
-		errs = errs.Also(apis.ErrMissingOneOf(fieldPaths...))
-	} else if len(specified) > 1 {
-		errs = errs.Also(apis.ErrMultipleOneOf(specified...))
-	}
-
-	return errs
+	return nil
 }
 
 func validateProjectedVolumeSource(vp corev1.VolumeProjection) *apis.FieldError {
@@ -376,29 +319,6 @@ func ValidatePodSpec(ctx context.Context, ps corev1.PodSpec) *apis.FieldError {
 		errs = errs.Also(
 			warnDefaultContainerSecurityContext(ctx, ps.SecurityContext, ps.InitContainers[i].SecurityContext).
 				ViaField("securityContext").ViaFieldIndex("initContainers", i))
-	}
-
-	volumes, err := ValidateVolumes(ctx, ps.Volumes, AllMountedVolumes(append(ps.InitContainers, ps.Containers...)))
-	errs = errs.Also(err.ViaField("volumes"))
-
-	errs = errs.Also(validateInitContainers(ctx, ps.InitContainers, ps.Containers, volumes))
-
-	port, err := validateContainersPorts(ps.Containers)
-	errs = errs.Also(err.ViaField("containers[*]"))
-
-	switch len(ps.Containers) {
-	case 0:
-		errs = errs.Also(apis.ErrMissingField("containers"))
-	case 1:
-		errs = errs.Also(ValidateContainer(ctx, ps.Containers[0], volumes, port).
-			ViaFieldIndex("containers", 0))
-	default:
-		errs = errs.Also(validateContainers(ctx, ps.Containers, volumes, port))
-	}
-	if ps.ServiceAccountName != "" {
-		for _, err := range validation.IsDNS1123Subdomain(ps.ServiceAccountName) {
-			errs = errs.Also(apis.ErrInvalidValue(ps.ServiceAccountName, "serviceAccountName", err))
-		}
 	}
 	return errs
 }
@@ -622,80 +542,11 @@ func validateCapabilities(ctx context.Context, cap *corev1.Capabilities) *apis.F
 }
 
 func validateSecurityContext(ctx context.Context, sc *corev1.SecurityContext) *apis.FieldError {
-	if sc == nil {
-		return nil
-	}
-	errs := apis.CheckDisallowedFields(*sc, *SecurityContextMask(ctx, sc))
-
-	errs = errs.Also(validateCapabilities(ctx, sc.Capabilities).ViaField("capabilities"))
-
-	if sc.RunAsUser != nil {
-		uid := *sc.RunAsUser
-		if uid < minUserID || uid > maxUserID {
-			errs = errs.Also(apis.ErrOutOfBoundsValue(uid, minUserID, maxUserID, "runAsUser"))
-		}
-	}
-
-	if sc.RunAsGroup != nil {
-		gid := *sc.RunAsGroup
-		if gid < minGroupID || gid > maxGroupID {
-			errs = errs.Also(apis.ErrOutOfBoundsValue(gid, minGroupID, maxGroupID, "runAsGroup"))
-		}
-	}
-	return errs
+	return nil
 }
 
 func validateVolumeMounts(mounts []corev1.VolumeMount, volumes map[string]corev1.Volume) *apis.FieldError {
-	var errs *apis.FieldError
-	// Check that volume mounts match names in "volumes", that "volumes" has 100%
-	// coverage, and the field restrictions.
-	seenName := make(sets.String, len(mounts))
-	seenMountPath := make(sets.String, len(mounts))
-	for i := range mounts {
-		vm := mounts[i]
-		errs = errs.Also(apis.CheckDisallowedFields(vm, *VolumeMountMask(&vm)).ViaIndex(i))
-		// This effectively checks that Name is non-empty because Volume name must be non-empty.
-		if _, ok := volumes[vm.Name]; !ok {
-			errs = errs.Also((&apis.FieldError{
-				Message: "volumeMount has no matching volume",
-				Paths:   []string{"name"},
-			}).ViaIndex(i))
-		}
-		seenName.Insert(vm.Name)
-
-		if vm.MountPath == "" {
-			errs = errs.Also(apis.ErrMissingField("mountPath").ViaIndex(i))
-		} else if reservedPaths.Has(path.Clean(vm.MountPath)) {
-			errs = errs.Also((&apis.FieldError{
-				Message: fmt.Sprintf("mountPath %q is a reserved path", path.Clean(vm.MountPath)),
-				Paths:   []string{"mountPath"},
-			}).ViaIndex(i))
-		} else if !path.IsAbs(vm.MountPath) {
-			errs = errs.Also(apis.ErrInvalidValue(vm.MountPath, "mountPath").ViaIndex(i))
-		} else if seenMountPath.Has(path.Clean(vm.MountPath)) {
-			errs = errs.Also(apis.ErrInvalidValue(
-				fmt.Sprintf("%q must be unique", vm.MountPath), "mountPath").ViaIndex(i))
-		}
-		seenMountPath.Insert(path.Clean(vm.MountPath))
-
-		shouldCheckReadOnlyVolume := volumes[vm.Name].EmptyDir == nil && volumes[vm.Name].PersistentVolumeClaim == nil
-		if shouldCheckReadOnlyVolume && !vm.ReadOnly {
-			errs = errs.Also((&apis.FieldError{
-				Message: "volume mount should be readOnly for this type of volume",
-				Paths:   []string{"readOnly"},
-			}).ViaIndex(i))
-		}
-
-		if volumes[vm.Name].PersistentVolumeClaim != nil {
-			if volumes[vm.Name].PersistentVolumeClaim.ReadOnly && !vm.ReadOnly {
-				errs = errs.Also((&apis.FieldError{
-					Message: "volume is readOnly but volume mount is not",
-					Paths:   []string{"readOnly"},
-				}).ViaIndex(i))
-			}
-		}
-	}
-	return errs
+	return nil
 }
 
 func validateContainerPorts(ports []corev1.ContainerPort) *apis.FieldError {
@@ -871,42 +722,8 @@ func ValidateNamespacedObjectReference(p *corev1.ObjectReference) *apis.FieldErr
 //
 // See the allowed properties in the `PodSecurityContextMask`
 func ValidatePodSecurityContext(ctx context.Context, sc *corev1.PodSecurityContext) *apis.FieldError {
-	if sc == nil {
-		return nil
-	}
 
-	errs := apis.CheckDisallowedFields(*sc, *PodSecurityContextMask(ctx, sc))
-
-	if sc.RunAsUser != nil {
-		uid := *sc.RunAsUser
-		if uid < minUserID || uid > maxUserID {
-			errs = errs.Also(apis.ErrOutOfBoundsValue(uid, minUserID, maxUserID, "runAsUser"))
-		}
-	}
-
-	if sc.RunAsGroup != nil {
-		gid := *sc.RunAsGroup
-		if gid < minGroupID || gid > maxGroupID {
-			errs = errs.Also(apis.ErrOutOfBoundsValue(gid, minGroupID, maxGroupID, "runAsGroup"))
-		}
-	}
-
-	if sc.FSGroup != nil {
-		gid := *sc.FSGroup
-		if gid < minGroupID || gid > maxGroupID {
-			errs = errs.Also(apis.ErrOutOfBoundsValue(gid, minGroupID, maxGroupID, "fsGroup"))
-		}
-	}
-
-	for i, gid := range sc.SupplementalGroups {
-		if gid < minGroupID || gid > maxGroupID {
-			err := apis.ErrOutOfBoundsValue(gid, minGroupID, maxGroupID, "").
-				ViaFieldIndex("supplementalGroups", i)
-			errs = errs.Also(err)
-		}
-	}
-
-	return errs
+	return nil
 }
 
 // warnDefaultContainerSecurityContext warns about Kubernetes default
@@ -919,47 +736,8 @@ func ValidatePodSecurityContext(ctx context.Context, sc *corev1.PodSecurityConte
 // settings, the purpose is to avoid accidentally-insecure settings, not to
 // block deliberate use of dangerous settings.
 func warnDefaultContainerSecurityContext(_ context.Context, psc *corev1.PodSecurityContext, sc *corev1.SecurityContext) *apis.FieldError {
-	if sc == nil {
-		sc = &corev1.SecurityContext{}
-	}
-	if psc == nil {
-		psc = &corev1.PodSecurityContext{}
-	}
 
-	insecureDefault := func(fieldPath string) *apis.FieldError {
-		return apis.ErrGeneric("Kubernetes default value is insecure, Knative may default this to secure in a future release", fieldPath).At(apis.WarningLevel)
-	}
-
-	var errs *apis.FieldError
-	if psc.RunAsNonRoot == nil && sc.RunAsNonRoot == nil {
-		errs = errs.Also(insecureDefault("runAsNonRoot"))
-	}
-
-	if sc.AllowPrivilegeEscalation == nil {
-		errs = errs.Also(insecureDefault("allowPrivilegeEscalation"))
-	}
-
-	if sc.SeccompProfile == nil && psc.SeccompProfile == nil {
-		errs = errs.Also(insecureDefault("seccompProfile"))
-	} else {
-		pscIsDefault := psc.SeccompProfile == nil || psc.SeccompProfile.Type == ""
-		scIsDefault := sc.SeccompProfile == nil || sc.SeccompProfile.Type == ""
-		if pscIsDefault && scIsDefault {
-			errs = errs.Also(insecureDefault("seccompProfile.type"))
-		}
-	}
-
-	if sc.Capabilities == nil {
-		errs = errs.Also(insecureDefault("capabilities"))
-	} else {
-		if sc.Capabilities.Drop == nil {
-			errs = errs.Also(insecureDefault("capabilities.drop"))
-		} else if len(sc.Capabilities.Drop) > 0 && sc.Capabilities.Drop[0] == "all" {
-			// Sometimes, people mis-spell "ALL" as "all", which does nothing.
-			errs = errs.Also(apis.ErrInvalidValue("all", "capabilities.drop", "Must be spelled as 'ALL'").At(apis.WarningLevel))
-		}
-	}
-	return errs
+	return nil
 }
 
 // This is attached to contexts as they are passed down through a user container

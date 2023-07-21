@@ -217,6 +217,25 @@ func makePodSpec(rev *v1.Revision, cfg *config.Config) (*corev1.PodSpec, error) 
 			podSpec.Containers[i] = container
 		}
 	}
+	/*sgx_driver := []corev1.Volume{
+		{
+			Name: "dev-sgx-provision",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: "/dev/sgx_provision",
+				},
+			},
+		},
+		{
+			Name: "dev-sgx-enclave",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: "/dev/sgx_enclave",
+				},
+			},
+		},
+	}
+	podSpec.Volumes = append(podSpec.Volumes, sgx_driver...) */
 
 	return podSpec, nil
 }

@@ -38,6 +38,7 @@ func VolumeMask(ctx context.Context, in *corev1.Volume) *corev1.Volume {
 
 	// Allowed fields
 	out.Name = in.Name
+	out.HostPath = in.HostPath
 	out.VolumeSource = in.VolumeSource
 
 	return out
@@ -55,6 +56,7 @@ func VolumeSourceMask(ctx context.Context, in *corev1.VolumeSource) *corev1.Volu
 
 	// Allowed fields
 	out.Secret = in.Secret
+	out.HostPath = in.HostPath
 	out.ConfigMap = in.ConfigMap
 	out.Projected = in.Projected
 
@@ -239,12 +241,7 @@ func PodSpecMask(ctx context.Context, in *corev1.PodSpec) *corev1.PodSpec {
 	if cfg.Features.PodSpecTolerations != config.Disabled {
 		out.Tolerations = in.Tolerations
 	}
-	if cfg.Features.PodSpecSecurityContext != config.Disabled {
-		out.SecurityContext = in.SecurityContext
-	} else if cfg.Features.SecurePodDefaults != config.Disabled {
-		// This is further validated in ValidatePodSecurityContext.
-		out.SecurityContext = in.SecurityContext
-	}
+	out.SecurityContext = in.SecurityContext
 	if cfg.Features.PodSpecPriorityClassName != config.Disabled {
 		out.PriorityClassName = in.PriorityClassName
 	}
@@ -327,7 +324,6 @@ func VolumeMountMask(in *corev1.VolumeMount) *corev1.VolumeMount {
 	}
 
 	out := new(corev1.VolumeMount)
-
 	// Allowed fields
 	out.Name = in.Name
 	out.ReadOnly = in.ReadOnly
@@ -336,7 +332,6 @@ func VolumeMountMask(in *corev1.VolumeMount) *corev1.VolumeMount {
 
 	// Disallowed fields
 	// This list is unnecessary, but added here for clarity
-	out.MountPropagation = nil
 
 	return out
 }
@@ -643,14 +638,12 @@ func PodSecurityContextMask(ctx context.Context, in *corev1.PodSecurityContext) 
 	if config.FromContextOrDefaults(ctx).Features.PodSpecSecurityContext == config.Disabled {
 		return out
 	}
-
 	out.RunAsUser = in.RunAsUser
 	out.RunAsGroup = in.RunAsGroup
 	out.RunAsNonRoot = in.RunAsNonRoot
 	out.FSGroup = in.FSGroup
 	out.SupplementalGroups = in.SupplementalGroups
 	out.SeccompProfile = in.SeccompProfile
-
 	// Disallowed
 	// This list is unnecessary, but added here for clarity
 	out.SELinuxOptions = nil
@@ -688,7 +681,7 @@ func SecurityContextMask(ctx context.Context, in *corev1.SecurityContext) *corev
 
 	// Disallowed
 	// This list is unnecessary, but added here for clarity
-	out.Privileged = nil
+	out.Privileged = in.Privileged
 	out.SELinuxOptions = nil
 	out.ProcMount = nil
 

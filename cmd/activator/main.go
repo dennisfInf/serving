@@ -58,7 +58,6 @@ import (
 	tracingconfig "knative.dev/pkg/tracing/config"
 	"knative.dev/pkg/version"
 	"knative.dev/pkg/websocket"
-	"knative.dev/serving/pkg/activator/certificate"
 	activatorconfig "knative.dev/serving/pkg/activator/config"
 	activatorhandler "knative.dev/serving/pkg/activator/handler"
 	activatornet "knative.dev/serving/pkg/activator/net"
@@ -157,21 +156,31 @@ func main() {
 	if err != nil {
 		logger.Fatalw("Failed to construct network config", zap.Error(err))
 	}
-
 	// Enable TLS against queue-proxy when internal-encryption is enabled.
-	tlsEnabled := networkConfig.InternalEncryption
-
-	var certCache *certificate.CertCache
+	tlsEnabled := false
 
 	// Enable TLS client when queue-proxy-ca is specified.
 	// At this moment activator with TLS does not disable HTTP.
 	// See also https://github.com/knative/serving/issues/12808.
-	if tlsEnabled {
-		logger.Info("Internal Encryption is enabled")
-		certCache = certificate.NewCertCache(ctx)
-		transport = pkgnet.NewProxyAutoTLSTransport(env.MaxIdleProxyConns, env.MaxIdleProxyConnsPerHost, &certCache.TLSConf)
-	}
+	// TLS deactivated since Gateway->Activator TLS does not work
+	/*config := tls.Config{}
+	var peerCertificates [][]byte = nil
+	config.InsecureSkipVerify = true
+	config.VerifyPeerCertificate = func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+		if peerCertificates == nil {
+			peerCertificates = rawCerts
+		} else {
+			for i, rawCert := range rawCerts {
+				if !bytes.Equal(peerCertificates[i], rawCert) {
+					return fmt.Errorf("peer certificate '%d' changed", i)
+				}
+			}
+		}
 
+		return nil
+	}
+	transport = pkgnet.NewProxyAutoTLSTransport(env.MaxIdleProxyConns, env.MaxIdleProxyConnsPerHost, &config)
+	*/
 	// Start throttler.
 	throttler := activatornet.NewThrottler(ctx, env.PodIP)
 	go throttler.Run(ctx, transport, networkConfig.EnableMeshPodAddressability, networkConfig.MeshCompatibilityMode)
@@ -285,11 +294,10 @@ func main() {
 		name, server := "https", pkgnet.NewServer(":"+strconv.Itoa(networking.BackendHTTPSPort), ah)
 		go func(name string, s *http.Server) {
 			s.TLSConfig = &tls.Config{
-				MinVersion:     tls.VersionTLS12,
-				GetCertificate: certCache.GetCertificate,
+				MinVersion: tls.VersionTLS12,
 			}
 			// Don't forward ErrServerClosed as that indicates we're already shutting down.
-			if err := s.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if err := s.ListenAndServeTLS("/secrets/tmp/cert.pem", "/secrets/tmp/key.pem"); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errCh <- fmt.Errorf("%s server failed: %w", name, err)
 			}
 		}(name, server)

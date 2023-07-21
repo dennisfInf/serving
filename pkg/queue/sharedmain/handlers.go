@@ -46,7 +46,7 @@ func mainHandler(
 ) (http.Handler, *pkghandler.Drainer) {
 	target := net.JoinHostPort("127.0.0.1", env.UserPort)
 
-	httpProxy := pkghttp.NewHeaderPruningReverseProxy(target, pkghttp.NoHostOverride, activator.RevisionHeaders, false /* use HTTP */)
+	httpProxy := pkghttp.NewHeaderPruningReverseProxy(target, pkghttp.NoHostOverride, activator.RevisionHeaders, true /* use HTTP */)
 	httpProxy.Transport = transport
 	httpProxy.ErrorHandler = pkghandler.Error(logger)
 	httpProxy.BufferPool = netproxy.NewBufferPool()
